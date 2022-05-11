@@ -1,4 +1,6 @@
 # .gitignore file
-
-
+.DS_Store
 .Rproj.user
+*.txt
+*.pdf
+*.html
