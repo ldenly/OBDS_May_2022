@@ -6,3 +6,6 @@
 *.html
 5_ggplot2.Rproj
 ggplot2_files/
+EH2011.xlsx
+iris.tsv
+.Rhistory
