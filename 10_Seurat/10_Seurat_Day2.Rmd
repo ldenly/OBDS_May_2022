@@ -1,0 +1,320 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(DT)
+library(gprofiler2)
+```
+
+# Exercise
+
+## Read in the RDS object we created and save from Seurat day 1
+
+- use the `readRDS()` function to read in previously saved object
+
+```{r}
+seurat_after_qc <- readRDS("seurat_after_qc.RDS")
+```
+
+- Check the Default Assay
+
+```{r}
+DefaultAssay(seurat_after_qc)
+```
+
+
+## Apply SCTransfrom  normalisation
+
+Use `SCTransform()` function
+
+SCTransform vignette: https://satijalab.org/seurat/articles/sctransform_vignette.html 
+
+`SCTransform()`  command replaces `NormalizeData()`, `ScaleData` and `FindVariableFeatures()` run for the RNA assay in day 1 Seurat
+
+Should we remove any confounding variables like we did for the RNA assay for Day 1?
+
+Do we want to use the same number of variable featuresn(n=1000) or more than what we used for `NormalizeData()` function.
+
+
+```{r}
+?SCTransform
+
+head(seurat_after_qc)
+seurat_after_qc <- SCTransform(
+  object = seurat_after_qc,
+  assay = "RNA",
+  new.assay.name = "SCT", 
+  do.correct.umi = TRUE,
+  ncells = 5000, 
+  variable.features.n = 3000, 
+  vars.to.regress = "percent_mt",
+  return.only.var.genes = TRUE)
+
+#don't use UMI in vars.to.regress as function does this already
+```
+where is the new normalisation stored?
+Answer: 
+
+explore the `seurat_after_qc` objects meta.data and assays ? 
+
+
+```{r}
+Assays(seurat_after_qc)
+
+head(seurat_after_qc)
+seurat_after_qc
+dim(seurat_after_qc@assays$RNA)
+dim(seurat_after_qc@assays$SCT)
+```
+
+```{r}
+?SCTransform
+```
+
+is there a change? 
+Answer: yes, new Assay called SCT 
+
+Are there new columns in the meta.data?
+Answer: yes, recalcultaed library size based on corrected depth. 
+
+
+# Exercise
+
+## Visulaisation
+
+- The library size and number of features detected per cell is already present in the Seurat object.
+
+- When you run `SCTransform` you get two new variables for library size and features for SCT normalisation
+
+ - Use the function `VlnPlot()` to display compare RNA assay vs SCT assay library size in one plot 
+ 
+ - Vlnplot of features detected in RNA vs SCT  in a single violin plot.
+
+- check to see how you can have fixed ylims in the `VlnPlot()` function
+
+```{r}
+head(seurat_after_qc)
+VlnPlot(seurat_after_qc,features = c("nCount_RNA", "nCount_SCT"), same.y.lims = TRUE )
+VlnPlot(seurat_after_qc,features = c("nCount_RNA", "nCount_SCT"), same.y.lims = FALSE )
+
+```
+
+
+
+
+## Bonus-
+- Visualise the distribution of SCT corrected count data for a feature of your choice.
+- Visualise the distribution of SCT logs counts in the dataa slot for a feature (e.g. LYZ)
+
+- Visualise the distribution of SCT scale.data count feature of your choice. 
+
+lets choose LYZ like day 1
+
+```{r}
+DefaultAssay(seurat_after_qc) <- "SCT"
+head(seurat_after_qc)
+
+ggplot_lyz_corrected <- ggplot(FetchData(seurat_after_qc, vars = "LYZ", slot = "counts"), aes(LYZ)) +
+    geom_histogram(fill = "grey", color = "black", bins = 100) +
+    coord_cartesian(ylim = c(0, 500)) +
+    cowplot::theme_cowplot()
+ggplot_lyz_normalised <- ggplot(FetchData(seurat_after_qc, vars = "LYZ", slot = "data"), aes(LYZ)) +
+    geom_histogram(fill = "grey", color = "black", bins = 100) +
+    coord_cartesian(ylim = c(0, 500)) +
+    cowplot::theme_cowplot()
+ggplot_lyz_scaled <- ggplot(FetchData(seurat_after_qc,vars = "LYZ", slot = "scale.data" ), aes(LYZ)) +
+    geom_histogram(fill = "grey", color = "black", bins = 100) +
+    coord_cartesian(ylim = c(0, 500)) +
+    cowplot::theme_cowplot()
+cowplot::plot_grid(ggplot_lyz_corrected, ggplot_lyz_normalised,ggplot_lyz_scaled, ncol = 1)
+```
+Use the function `VariableFeaturs` to pull out the 1:10 the variable genes after SCT and compare to 1:10 from the RNA assay
+
+do we need to change any arguments to get the variables genes specific to the SCT or RNA assay
+
+```{r}
+?VariableFeatures.Assay
+VariableFeatures(seurat_after_qc, assay = "RNA")[1:10]
+VariableFeatures(seurat_after_qc, assay = "SCT")[1:10]
+```
+
+
+
+
+
+# Exercise
+
+
+## Dimensionality reduction on SCT transformed data
+
+- Run a principal component analysis and UMAP on the Seurat object.
+- Check the Default assay
+
+- Do we want to change the `reduction.name` argument so that we can still keep the RNA assay based PCA results?
+  
+```{r}
+DefaultAssay(seurat_after_qc) <- "SCT"
+seurat_after_qc <- RunPCA(seurat_after_qc, reduction.name = "sct.pca" )
+```
+
+check to see what reductions are now present in the object
+
+```{r}
+Reductions(seurat_after_qc)
+?RunPCA
+```
+
+- First, visualise the amount of variance explained the top principal components for SCTransformed data (number of your choice).
+  How many principal components would you use for downstream analyses?
+  
+- do we need to specificy the correction reduction?
+
+```{r}
+?ElbowPlot
+
+ElbowPlot( seurat_after_qc, ndims = 100 , reduction = "sct.pca" )
+```
+
+- Run the UMAP technique on the first 20 principal components stored in the Seurat object and visualise the result as a scatterplot.
+
+how can we change the reduction name from defauult "umap" to "sct.umap"
+
+how can we specify that we want to use pca run on the SCT Assay (sct.pca) in the previous step?
+
+
+
+```{r}
+?RunUMAP
+seurat_after_qc <- RunUMAP(seurat_after_qc, dims = 1:20, reduction ="sct.pca", reduction.name = "sct.umap")
+```
+
+use DimPlot() to plot the umap, what happens if you try to specify different reductions with UMAPPlot()?
+
+compare RNA based umap with sct.umap
+
+```{r, fig.width=10}
+p1 <- DimPlot(seurat_after_qc, reduction ="umap")   + ggtitle("RNA UMAP")
+p2 <-   DimPlot(seurat_after_qc, reduction = "sct.umap") + ggtitle("SCT UMAP")
+ p1 + p2
+```
+
+
+# Exercise
+
+## Clustering on SCTransformed data
+
+
+
+- Then, compute the graph of nearest neighbours using the function `FindNeighbors()`.
+  Which principal components are used by default?
+  Instead, specify the number of components that you have chosen.
+  Have you chosen the right `reduction`  and `assay`? 
+  
+```{r}
+seurat_after_qc <-  FindNeighbors(seurat_after_qc, dims = 1:20,assay = "SCT",reduction = "sct.pca")
+```
+
+
+- Finally, compute cluster labels.
+  What is the default setting for the `resolution` argument?
+  Instead, set it to `0.5`.
+  Do you expect more or fewer clusters following that change?
+  What other parameters would you also try to experiment with?
+  - should we specify the `graph.name` ?
+
+```{r}
+seurat_after_qc <- FindClusters(seurat_after_qc, resolution = 0.5, graph.name = "SCT_snn")
+```
+
+
+Check cluster assigment between SCT and RNA workflow
+
+if you use the same resolution = o.5 and dims as RNA workflow do you get the same number of cluster or more?
+
+are cells in the same cluster across both RNA and SCT
+```{r}
+table(seurat_after_qc$RNA_snn_res.0.5, seurat_after_qc$SCT_snn_res.0.5)
+
+```
+
+- Visualise the SCT cluster labels on the SCT transformed UMAP scatter plot and the RNA cluster labels on the RNA umap
+  How would you describe the agreement between the UMAP layout and the clustering results?= for SCT vs RNA Assay results
+  
+
+```{r}
+p1 <- DimPlot(seurat_after_qc, reduction = "umap", group.by = "RNA_snn_res.0.5") + ggtitle("RNA UMAP")
+p2 <- DimPlot(seurat_after_qc, reduction = "sct.umap", group.by = "SCT_snn_res.0.5" ) + ggtitle("SCT UMAP")
+p1 + p2
+```
+
+
+Plot some known cell-type markers for PBMC datasets, does the SCT better seperate the celltypes?
+
+CD14+ Monocyte : LYZ, CD14
+CD16 Monocytes : FCGR3A, MS4A7
+
+CD4 T :  CD4, IL76
+
+CD8 T : CD8A, CD3D
+
+NK : GNLY, GZMB,NKG7
+
+B Cell :  MS4A1 , CD79A
+
+DC : CST3, FCER1A
+
+Platelets : PPBP
+
+
+```{r, fig.width=10, fig.height=8}
+FeaturePlot(seurat_after_qc, features = c("LYZ","FCGR3A","CD4","CD8A","GNLY","MS4A1","CST3","PPBP"), reduction = "sct.umap")
+FeaturePlot(seurat_after_qc, features = c("LYZ","FCGR3A","CD4","CD8A","GNLY","MS4A1","CST3","PPBP"), reduction = "umap")
+```
+
+
+
+# Bonus exercise to try in your own time:: Pathway analysis on Cluster markers for all clusters
+
+
+- Choose either RNA workflow based generated or SCT generated based  seurat marker results
+
+- we will be using Gprofiler `gost()` function fot multiple gene lists at the same time
+
+- First we need to  filter seurat get top significant (p_adj < 0.05)  upregulated genes with a LogFC threshold (decided by you) for each cluster , use `dplyr:: group_by()` and `dplyr::filter` to get gene list for each cluster
+then only select cluster and gene
+
+- We then use ` split()`  on the filtered_df to divide gene markers into list  of multiple character vectors containing genes split by cluster
+
+- can refer to the pahtway analysis code from week 3 but for h.sapiens
+
+```{r}
+
+```
+
+ We then run pathway analysis using `gost()` with multi_query = TRUE
+ 
+ - to generate all_genes_id , we use all genes present in either the RNA assay or SCT assay , as we have already filtered out lowly expressed genes not present in certain cells .
+ 
+```{r}
+# Choose Default assay based on if running pathway analyses on RNA or SCT results
+DefaultAssay(seurat_after_qc) <- ""
+# create a vector of  of all genes 
+all_genes_id <- rownames(seurat_after_qc)
+multi_gostquery_results_obj <- gost(query = seurat_clusters_list,
+                                    organism = "hsapiens", 
+                                    exclude_iea = TRUE, # change to True as have alot of results otherwise
+                                    correction_method = "g_SCS",  # this is thier own multiple testing coorrection - actually more strignent then bonferroni or BH 
+                                    custom_bg = all_gene_ids, # make sure this is all gene ids 
+                                    multi_query = TRUE)
+```
+
+
+can you plot the results for different clusters together ?
+
+```{r}
+gostplot(multi_gostquery_results_obj, capped = TRUE, interactive = TRUE)
+```
+
+
+

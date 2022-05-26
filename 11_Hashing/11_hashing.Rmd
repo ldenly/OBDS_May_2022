@@ -1,0 +1,381 @@
+---
+title: "Example code for single-cell analysis with Seurat, day 2"
+author: "Devika Agarwal"
+date: "23/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(DT)
+library(gprofiler2)
+```
+
+Afternoon Session
+
+Demultiplexing with hashtag oligos (HTOs)
+
+Dataset : 12-HTO dataset from four human cell lines
+
+* Dataset represent Data represent single cells collected from four cell lines: HEK, K562, KG1 and THP1
+* Each cell line was further split into three samples (12 samples in total)
+* Each sample was labeled with a hashing antibody mixture (CD29 and CD45), pooled, and run on a single lane of 10X.
+* Based on this design, we should be able to detect doublets both across and within cell types
+
+
+Load in the UMI matrix for the RNA data
+```{r}
+hto12.umis <- readRDS("/t1-data/project/obds/shared/resources/4_r_single_cell/seurat_day_2/data/hto12_umi_mtx.rds")
+# how many cells and genes do we have in the RNA matrix?
+```
+
+
+load in the HTO natrix
+
+```{r}
+hto12.htos <- readRDS("/t1-data/project/obds/shared/resources/4_r_single_cell/seurat_day_2/data/hto12_hto_mtx.rds")
+# what is the structure of the hto12.htos object? (what is the rows and what is the columns?)
+# check the class of the hto object
+#how many cell barcodes and HTO samples do we have?
+dim(hto12.htos)
+dim(hto12.umis)
+```
+
+
+Now we only want to subset to those cell barcodes or  cells (actually called as cells by cellRanger or EmptyDrops on the gene expression data) which are detected by both RNA and HTO matrices? 
+
+```{r}
+joint.bcs <- intersect(rownames(hto12.htos), colnames(hto12.umis))
+# check the class  of the joint.bcs object and how many cell barcodes do we have in common
+class(joint.bcs)
+length(joint.bcs)
+```
+
+# subset  the RNA matrix  to only the `joint.bcs` cell barcodes
+
+```{r}
+hto12.umis.common <- hto12.umis[ ,joint.bcs]
+# check the dims
+dim(hto12.umis.common)
+head(hto12.umis.common)
+```
+
+
+
+
+- Create  a Seurat object with the RNA (UMI count matrix) containing the `joint_bcs`
+
+ Name the object `hto12_object`
+ 
+ Include features detected in at least 3 cells,
+ 
+ and cells where at least 200 features detected
+ 
+- add HTO data as another assay to `hto12_object` 
+
+
+
+
+```{r}
+hto12_object <-CreateSeuratObject(hto12.umis.common, min.cells = 3, min.features = 200)
+# Normalise with log normalization ,find variable genes and Scale RNA data
+hto12_object <- NormalizeData(hto12_object)
+hto12_object <- FindVariableFeatures(hto12_object)
+hto12_object <- ScaleData(hto12_object)
+dim(hto12_object)
+```
+
+
+
+we only want to subset the hto matrix to those cell barcodes which are now in the `hto12_object` Seurat object and  make sure that the features only consist of the HTO tags
+
+Now look at the function `CreateAssayObject()` to  add the subsetted  HTO  matrix to the already created  `hto12_object` seurat object as a new assay called `HTO`
+
+what is the expected format of the input matrix for `CreateAssayObject()`?
+
+answer: 
+
+is our subsetted `hto12.htos.common` in the right format? if not what do we do to get it in the right format before adding it as another assay?
+
+Answer : 
+
+
+```{r}
+# we want to subset the hto12.htos object such that  the rows or cell barcodes are only the same ones as the hto12_object and colnames are only consist of the 12 HTO tags
+# we then want to transpoose this matrix, so now our cell barcodes are colnames and HTO tags are rownames 
+hto12.htos.common <- t(hto12.htos[colnames(hto12_object), 1:12])
+hto12.htos.common
+```
+
+
+
+do we want to do any further filtering on the HTO object?
+
+Answer :
+
+now add a new assay called "HTO" to the `hto12_object` seurat object
+
+```{r}
+hto12_object[["HTO"]] <- CreateAssayObject(counts = hto12.htos.common)
+#check the dim of the seurat object
+dim(hto12_object) 
+```
+
+
+Normalise the HTO data , here we will use the CLR transformation with margin =1 (Default setting)
+
+```{r}
+# check the Default Assay
+DefaultAssay(hto12_object) <- "HTO"
+hto12_object <- NormalizeData(hto12_object, assay = "HTO", normalization.method = "CLR" , margin=1)
+```
+
+
+Demultiplex cells based on HTO enrichment
+
+Here we use Seurat Function `HTODemux()` to assign single cells to their original samples
+
+```{r}
+hto12_object <- HTODemux(hto12_object)
+```
+
+checkout the metadata column of the `hto12_object` , try to read the `HTODemux()` results output summary in the `Value` section to understand the results
+
+```{r}
+head(hto12_object$hash.ID)
+head(hto12_object$HTO_classification)
+head(hto12_object$HTO_classification.global)
+
+```
+
+
+
+Visualise the Demultiplexing results
+
+we can visualise how many cells are classified as singlets, doublets and negative/ambiguous cells
+
+check the meta.data, which column do we want for this information?
+
+```{r}
+table(hto12_object$HTO_classification.global)
+```
+
+Visualize enrichment for selected HTOs with ridge plots
+
+plot the max HTO signal  for one of the HTO of each of the 4 cell lines (HEK, K562, KG1 and THP1) features with ridge plots using the `RidgePlot()` function
+
+plot Max HTO signal
+
+```{r, fig.height=8, fig.width=10}
+
+# Change the identities of the seurat object to the relevant metadata column
+
+Idents(hto12_object) <- "HTO_maxID"
+RidgePlot(hto12_object, assay = "HTO", features = c("HEK-A","THP1-A","K562-A","KG1-A"), ncol = 2)
+
+
+```
+
+
+Visualize pairs of HTO signals to confirm mutual exclusivity in singlets  between the same celline
+
+a) plot scatter plot of 2 HTOs within the same cell line e.g. HEK, colour by (single/doublet/negative status) 
+
+b) plot scatter plot of 2 HTOs within the same cell line e.g. HEK, colour by HTO_maxID 
+
+c) plot scatter plot of 2 HTOs within the same cell line e.g. HEK, colour by HTO_secondID
+
+use the function `FeatureScatter()`
+
+```{r}
+DefaultAssay(hto12_object) <- "HTO"
+FeatureScatter(hto12_object,feature1 = "HEK-A",feature2 = "HEK-B", group.by = "HTO_classification.global", span=F, smooth=F, shuffle=T )
+FeatureScatter(hto12_object,feature1 = "HEK-A",feature2 = "HEK-B", group.by = "HTO_maxID", span=F, smooth=F, shuffle=T ) 
+FeatureScatter(hto12_object,feature1 = "HEK-A",feature2 = "HEK-B", group.by = "HTO_secondID", span=F, smooth=F, shuffle=T ) 
+```
+what do you notice ?
+
+1) 
+2)
+
+
+
+Bonus Exercise
+
+Plot scatter plot of 2 HTOs across different cell lines e.g. K562 vs KG1 and colour by (single/doublet/negative status) and HTO_max ID
+ 
+```{r}
+FeatureScatter(hto12_object,feature1 = "K562-A",feature2 = "KG1-B", group.by = "HTO_classification.global", span=F, smooth=F, shuffle=T )
+FeatureScatter(hto12_object,feature1 = "K562-A",feature2 = "KG1-B", group.by = "HTO_maxID", span=F, smooth=F, shuffle=T ) 
+FeatureScatter(hto12_object,feature1 = "K562-A",feature2 = "KG1-B", group.by = "HTO_secondID", span=F, smooth=F, shuffle=T ) 
+```
+ 
+ 
+ 
+ 
+ 
+ 
+ Compare number of RNA UMIs for singlets, doublets and negative cells
+ 
+ what is a suitable plot for such comparisons?
+ 
+ Answer: 
+
+```{r}
+Idents(hto12_object) <- "HTO_classification.global"
+VlnPlot(hto12_object, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+#VlnPlot(hto12_object, features = "nCount_RNA", pt.size = 0, log = TRUE, split.by = "HTO_maxID")
+```
+
+question: what do you notice?
+
+Answer: 
+
+
+Visualize HTO signals in a heatmap , lookup `HTOHeatmap()`
+
+```{r, fig.width=8}
+HTOHeatmap(hto12_object, assay = "HTO")
+```
+
+what do you notice?
+
+
+
+Generate a two dimensional tSNE or umap embedding for HTOs. Here we are grouping cells by singlets and doublets ONLY for simplicity.
+
+do we need to subset our object?
+
+if so what are we subsetting out?
+
+
+
+
+```{r}
+Idents(hto12_object) <- 
+hto12_object.subset <- subset()
+```
+
+
+Run UMAP/TSNE
+ 
+what assay are we running UMAP/tsne for ?
+
+look up the arguments in `RunUMAP()` and/or `RunTSNE()` functions
+
+check which arguments in RunUMAP/RunUMAP/RunTSNE can be used to change the name of the reduction from defauult name of pca/umap/tsne to custom name
+
+before we Run UMAP, we need to scale and run PCA like we did in the normal single cell workflow
+
+
+Answer:
+
+
+```{r}
+# Calculate a tSNE & UMAP embedding of the HTO data
+DefaultAssay(hto12_object.subset) <- "HTO"
+hto12_object.subset <- RunUMAP()
+```
+
+check the Reductions in the object
+
+```{r}
+Reductions()
+```
+
+
+Plot the UMAP/tsne for the HTO assay
+* which reduction shall we plot?
+
+• colour by if singlet/doublet
+
+• colour by HTO final classification results (hash.ID)
+
+* check the arguments on how label the clusters by the cluster identity
+
+* can chnage the label size?
+
+
+```{r}
+```
+what do you notice about the cluustering on tthe UMAP/tsne, does the number of clusters mean anything?
+
+Answer: 
+
+ 
+what do you notice about the cloud of cells surrounding each cluster?
+
+Answer: 
+
+
+Bonus exercise
+# You can also visualize the more detailed classification result by group.by 
+HTO_maxID before plotting. 
+
+```{r}
+```
+what happens if you group.by the UMAP/TSNE plot by HTO..maxID?
+
+Answer: 
+
+
+
+
+
+
+Bonus Exercise (if we have time)
+
+
+Cluster and visualize cells using the usual scRNA-seq workflow, and examine for the potential presence of batch effects.
+
+do we need to rerun `FindVariableFeatures()` and `ScaleData()` again?
+
+Answer : 
+
+what other steps  do we need run to get viuslise our RNA data as umap/t-SNE? coloured by doublets/singlets/ and celltypes
+
+answer: 
+
+
+```{r}
+DefaultAssay(hto12_object.subset) <- "RNA"
+# Run PCA on most variable features
+hto12_object.subset <- 
+hto12_object.subset <- 
+hto12_object.subset <- RunPCA(hto12_object.subset)
+hto12_object.subset <- RunUMAP(hto12_object.subset, dims = 1:8)
+```
+
+
+
+Plot RNA based UMAP
+
+group.by hash.ID 
+
+create a new seurat object  meta.data column called _cell_line , which removes "_A or _B or _C " in the hash.ID and replaces it with "", to create a new meta.data with only the cell-line info
+
+```{r}
+#we create another metadata column based on the hash.id column, where we gsub the HTO tag info (-A,-B,-C) for each cell line to plot only the cell lien names to see if we have batch effect
+hto12_object.subset$cell_line <- gsub(pattern = "[-ABC]")
+```
+
+
+```{r}
+DimPlot()
+```
+
+what does our RNA based clustering on the UMAP/T-SNE show?
+
+Answer: 
+        
+
+
+Bonus exercise (try in your own time)
+
+create a second seurat object based , using the code above, and rerun the `HTODemux()` with a different value of pasitive quantile.
+
+try to check if the classificatiion changes massively if you adjusted the threshold for classification by playing around with the `positive.quantile` argument from the default.
+

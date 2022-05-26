@@ -9,3 +9,5 @@ ggplot2_files/
 EH2011.xlsx
 iris.tsv
 .Rhistory
+.RData
+*.RDS
