@@ -11,3 +11,5 @@ iris.tsv
 .Rhistory
 .RData
 *.RDS
+*.RProj
+
